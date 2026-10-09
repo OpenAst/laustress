@@ -1,11 +1,13 @@
 import Phaser from "phaser";
 import { GameConnection } from "../network/GameConnection";
 import { CAMPUS_LANDMARKS, getMapOrigin, landmarkToScreen, SIFAX_HALL } from "../map/campusMap";
-import { CLASSROOM_ACTIVITY, LOCATION, PLAYER_ACTION, SIFAX_DESKS, SIFAX_LECTURER, SIFAX_SEATS, WORLD } from "../../../../packages/shared/src/protocol.js";
+import { CLASSROOM_ACTIVITY, FOOD_STALL_OBSTACLE, LOCATION, PLAYER_ACTION, SIFAX_DESKS, SIFAX_LECTURER, SIFAX_SEATS, WORLD } from "../../../../packages/shared/src/protocol.js";
 import type { PlayerState } from "../../../../packages/shared/src/protocol.js";
+import { createPlayerActor, playHandshake } from "./PlayerActor";
 
 const WORLD_WIDTH = WORLD.width;
 const WORLD_HEIGHT = WORLD.height;
+const GAME_VIEW_WIDTH = WORLD.width + WORLD.campusExtraWidth;
 const TILE_SIZE = 256;
 const MAP_ZOOM = 18;
 const OSM_TILE_URL =
@@ -40,6 +42,9 @@ export class MainScene extends Phaser.Scene {
   private localPlayerState?: PlayerState;
   private mapTiles: MapTile[] = [];
   private mapOrigin = { x: 0, y: 0 };
+  private viewWidth = GAME_VIEW_WIDTH;
+  private worldOffsetX = (GAME_VIEW_WIDTH - WORLD_WIDTH) / 2;
+  private worldLayer!: Phaser.GameObjects.Container;
   private campusLayer!: Phaser.GameObjects.Container;
   private sifaxInteriorLayer!: Phaser.GameObjects.Container;
 
@@ -74,7 +79,6 @@ export class MainScene extends Phaser.Scene {
     );
     this.connection.connect();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.connection.disconnect());
-
   }
 
   update(_time: number, delta: number) {
@@ -127,15 +131,40 @@ export class MainScene extends Phaser.Scene {
     );
 
     if (!isInside) {
-      nearby =
+      const nearFoodStall =
+        Phaser.Math.Distance.Between(
+          actor.x,
+          actor.y,
+          WORLD.foodStallX,
+          WORLD.foodStallInteractionY,
+        ) <= WORLD.foodStallRadius;
+      const nearSifaxDoor =
         Phaser.Math.Distance.Between(
           actor.x,
           actor.y,
           WORLD.sifaxDoorX,
           WORLD.sifaxDoorY,
         ) <= WORLD.sifaxRadius;
-      prompt = "Press E: Enter Sifax Hall";
-      action = "interact";
+
+      if (nearFoodStall) {
+        nearby = true;
+        if ((this.localPlayerState?.hunger ?? 0) <= 0) {
+          prompt = "You're not hungry yet  ·  save your cash for later";
+        } else if ((this.localPlayerState?.money ?? 0) < WORLD.snackPrice) {
+          prompt = `Snack costs ₦${WORLD.snackPrice}  ·  earn more cash first`;
+        } else {
+          const hungerReduction = Math.min(
+            this.localPlayerState?.hunger ?? 0,
+            WORLD.snackHungerReduction,
+          );
+          prompt = `Press E: Buy snack  ·  ₦${WORLD.snackPrice}  ·  Hunger -${hungerReduction}`;
+          action = "interact";
+        }
+      } else if (nearSifaxDoor) {
+        nearby = true;
+        prompt = "Press E: Enter Sifax Hall";
+        action = "interact";
+      }
     } else {
       const nearExit =
         Phaser.Math.Distance.Between(
@@ -192,7 +221,7 @@ export class MainScene extends Phaser.Scene {
   }
 
   private createHud() {
-    this.add.rectangle(178, 96, 332, 154, 0x12231f, 0.94)
+    this.add.rectangle(178, 96, 332, 166, 0x12231f, 0.94)
       .setStrokeStyle(2, 0xd6b15d)
       .setScrollFactor(0)
       .setDepth(990);
@@ -249,7 +278,7 @@ export class MainScene extends Phaser.Scene {
       .setDepth(1000);
 
     this.add
-      .text(34, 164, "WASD / ARROWS  MOVE     E  INTERACT", {
+      .text(34, 158, "WASD / ARROWS  MOVE     E  INTERACT", {
         fontFamily: "Arial, sans-serif",
         fontSize: "10px",
         color: "#b4c5b5",
@@ -260,7 +289,7 @@ export class MainScene extends Phaser.Scene {
       .setDepth(1000);
 
     this.sifaxPrompt = this.add
-      .text(WORLD_WIDTH / 2, WORLD_HEIGHT - 16, "Press E: Attend lecture at Sifax Hall", {
+      .text(this.viewWidth / 2, WORLD_HEIGHT - 16, "Press E: Attend lecture at Sifax Hall", {
         fontFamily: "Arial, sans-serif",
         fontSize: "15px",
         color: "#fff7df",
@@ -279,7 +308,7 @@ export class MainScene extends Phaser.Scene {
       color: "#e9c66e",
       fontStyle: "bold",
     });
-    this.classActivityPanel = this.add.container(550, 18, [
+    this.classActivityPanel = this.add.container(this.viewWidth - 410, 18, [
       this.add.rectangle(195, 46, 390, 90, 0x12231f, 0.96).setStrokeStyle(2, 0xd6b15d),
       this.add.text(18, 15, "TODAY'S CLASS QUESTION", {
         fontFamily: "Arial, sans-serif",
@@ -298,7 +327,7 @@ export class MainScene extends Phaser.Scene {
     ]).setScrollFactor(0).setDepth(1010).setVisible(false);
 
     this.toastText = this.add
-      .text(WORLD_WIDTH / 2, WORLD_HEIGHT - 65, "", {
+      .text(this.viewWidth / 2, WORLD_HEIGHT - 65, "", {
         fontFamily: "Arial, sans-serif",
         fontSize: "16px",
         color: "#ffffff",
@@ -372,6 +401,7 @@ export class MainScene extends Phaser.Scene {
       if (!actor) {
         actor = this.createPlayer(player.id === this.selfId, player.id);
         this.playerActors.set(player.id, actor);
+        this.worldLayer.add(actor);
       }
 
       actor.setPosition(player.x, player.y);
@@ -406,12 +436,12 @@ export class MainScene extends Phaser.Scene {
   }
 
   private getMapOrigin() {
-    return getMapOrigin(SIFAX_HALL, MAP_ZOOM, WORLD_WIDTH, WORLD_HEIGHT);
+    return getMapOrigin(SIFAX_HALL, MAP_ZOOM, this.viewWidth, WORLD_HEIGHT);
   }
 
   private getVisibleMapTiles(): MapTile[] {
     const firstTileX = Math.floor(this.mapOrigin.x / TILE_SIZE);
-    const lastTileX = Math.floor((this.mapOrigin.x + WORLD_WIDTH - 1) / TILE_SIZE);
+    const lastTileX = Math.floor((this.mapOrigin.x + this.viewWidth - 1) / TILE_SIZE);
     const firstTileY = Math.floor(this.mapOrigin.y / TILE_SIZE);
     const lastTileY = Math.floor((this.mapOrigin.y + WORLD_HEIGHT - 1) / TILE_SIZE);
     const tiles: MapTile[] = [];
@@ -428,6 +458,8 @@ export class MainScene extends Phaser.Scene {
   private drawMap() {
     this.campusLayer = this.add.container(0, 0).setDepth(0);
     this.sifaxInteriorLayer = this.add.container(0, 0).setDepth(0).setVisible(false);
+    this.worldLayer = this.add.container(this.worldOffsetX, 0).setDepth(1);
+    this.worldLayer.add(this.sifaxInteriorLayer);
 
     this.drawCampus();
     this.drawSifaxInterior();
@@ -435,7 +467,7 @@ export class MainScene extends Phaser.Scene {
 
   private drawCampus() {
     const add = this.campusLayer;
-    add.add(this.add.rectangle(0, 0, WORLD_WIDTH, WORLD_HEIGHT, 0x83966f).setOrigin(0));
+    add.add(this.add.rectangle(0, 0, this.viewWidth, WORLD_HEIGHT, 0x83966f).setOrigin(0));
 
     for (const tile of this.mapTiles) {
       if (!this.textures.exists(tile.key)) continue;
@@ -453,7 +485,7 @@ export class MainScene extends Phaser.Scene {
         landmark,
         SIFAX_HALL,
         MAP_ZOOM,
-        WORLD_WIDTH,
+        this.viewWidth,
         WORLD_HEIGHT,
       );
       if (landmark.id === SIFAX_HALL.id) {
@@ -475,6 +507,58 @@ export class MainScene extends Phaser.Scene {
         })
         .setOrigin(0.5, 1));
     }
+
+    this.drawFoodStall();
+  }
+
+  private drawFoodStall() {
+    const { foodStallY: y } = WORLD;
+    const x = WORLD.foodStallX + this.worldOffsetX;
+    const add = this.campusLayer;
+
+    add.add(this.add.ellipse(x, y + 49, 174, 42, 0x263a2c, 0.25));
+    add.add(this.add.rectangle(x, y + 82, 104, 48, 0xb49b70, 0.9));
+    add.add(this.add.rectangle(
+      FOOD_STALL_OBSTACLE.x + this.worldOffsetX,
+      FOOD_STALL_OBSTACLE.y,
+      FOOD_STALL_OBSTACLE.width,
+      FOOD_STALL_OBSTACLE.height,
+      0xc8ae7c,
+    ).setStrokeStyle(3, 0x69543e));
+    add.add(this.add.rectangle(x, y - 2, 120, 36, 0x533f32).setStrokeStyle(2, 0x342a24));
+    add.add(this.add.rectangle(x, y - 2, 108, 26, 0x91b7b2));
+    add.add(this.add.rectangle(x + 43, y + 4, 18, 20, 0x31594a));
+    add.add(this.add.circle(x + 43, y - 9, 6, 0x855236).setStrokeStyle(1, 0x583925));
+    add.add(this.add.ellipse(x + 43, y - 13, 12, 6, 0x29251f));
+    add.add(this.add.rectangle(x, y + 17, 152, 9, 0x604636));
+
+    // Red and cream awning stripes make the food stall easy to recognize from afar.
+    add.add(this.add.rectangle(x, y - 35, 166, 24, 0x9f3f32).setStrokeStyle(2, 0x592d28));
+    for (let stripe = -4; stripe <= 4; stripe += 2) {
+      add.add(this.add.rectangle(x + stripe * 16, y - 35, 16, 22, 0xf0dfb7));
+    }
+    add.add(this.add.rectangle(x, y - 56, 160, 18, 0x27493e).setStrokeStyle(2, 0xd6b15d));
+    add.add(this.add.text(x, y - 56, "CAMPUS BITES", {
+      fontFamily: "Arial, sans-serif",
+      fontSize: "13px",
+      color: "#fff7df",
+      fontStyle: "bold",
+      letterSpacing: 0.5,
+    }).setOrigin(0.5));
+
+    for (const [snackX, color] of [[x - 32, 0xe7ac3e], [x - 8, 0x6c9b51], [x + 18, 0xc24e36]] as const) {
+      add.add(this.add.circle(snackX, y + 8, 7, color).setStrokeStyle(1, 0xfff1d0));
+      add.add(this.add.circle(snackX + 3, y + 4, 2, 0x426744));
+    }
+    add.add(this.add.text(x + 91, y + 4, "₦500\nSNACKS", {
+      fontFamily: "Arial, sans-serif",
+      fontSize: "10px",
+      color: "#fff7df",
+      fontStyle: "bold",
+      align: "center",
+      backgroundColor: "#533f32",
+      padding: { x: 4, y: 3 },
+    }).setOrigin(0.5));
   }
 
   private drawSifaxExterior(x: number, y: number) {
@@ -530,16 +614,21 @@ export class MainScene extends Phaser.Scene {
 
   private drawSifaxInterior() {
     const add = this.sifaxInteriorLayer;
-    add.add(this.add.rectangle(0, 0, WORLD_WIDTH, WORLD_HEIGHT, 0xcbb991).setOrigin(0));
-    add.add(this.add.rectangle(28, 24, WORLD_WIDTH - 56, WORLD_HEIGHT - 48, 0xe4d5b4)
+    const leftEdge = -this.worldOffsetX;
+    add.add(this.add.rectangle(leftEdge, 0, this.viewWidth, WORLD_HEIGHT, 0xcbb991).setOrigin(0));
+    add.add(this.add.rectangle(28 + leftEdge, 24, this.viewWidth - 56, WORLD_HEIGHT - 48, 0xe4d5b4)
       .setStrokeStyle(12, 0x614d3d));
-    add.add(this.add.rectangle(WORLD_WIDTH / 2, 35, WORLD_WIDTH - 92, 12, 0xa99069));
+    add.add(this.add.rectangle(this.viewWidth / 2 + leftEdge, 35, this.viewWidth - 92, 12, 0xa99069));
 
     // Floor tiles give the room scale and help the player read movement.
     const floor = this.add.graphics();
     floor.lineStyle(1, 0xb8a57f, 0.5);
-    for (let x = 92; x < WORLD_WIDTH - 60; x += 48) floor.lineBetween(x, 68, x, 548);
-    for (let y = 92; y < 548; y += 48) floor.lineBetween(60, y, WORLD_WIDTH - 60, y);
+    for (let x = leftEdge + 92; x < this.viewWidth - 60 + leftEdge; x += 48) {
+      floor.lineBetween(x, 68, x, 548);
+    }
+    for (let y = 92; y < 548; y += 48) {
+      floor.lineBetween(leftEdge + 60, y, this.viewWidth - 60 + leftEdge, y);
+    }
     add.add(floor);
 
     add.add(this.add.rectangle(WORLD_WIDTH / 2, 68, WORLD_WIDTH - 120, 24, 0x6e5946));
@@ -610,8 +699,12 @@ export class MainScene extends Phaser.Scene {
     }).setOrigin(0.5));
 
     // Keep an obvious gap in the south wall for the exit door.
-    add.add(this.add.rectangle(250, 560, 380, 18, 0x6e5946));
-    add.add(this.add.rectangle(710, 560, 380, 18, 0x6e5946));
+    const wallStart = leftEdge;
+    const exitLeft = WORLD.interiorExitX - 38;
+    const exitRight = WORLD.interiorExitX + 38;
+    const wallEnd = this.viewWidth + leftEdge;
+    add.add(this.add.rectangle((wallStart + exitLeft) / 2, 560, exitLeft - wallStart, 18, 0x6e5946));
+    add.add(this.add.rectangle((exitRight + wallEnd) / 2, 560, wallEnd - exitRight, 18, 0x6e5946));
     add.add(this.add.rectangle(WORLD.interiorExitX, 560, 76, 10, 0xe9b949));
     add.add(this.add.text(WORLD.interiorExitX, 589, "EXIT  •  PRESS E", {
       fontFamily: "Arial, sans-serif",
@@ -716,63 +809,10 @@ export class MainScene extends Phaser.Scene {
   }
 
   private createPlayer(isLocal: boolean, id: string) {
-    const bodyColor = isLocal ? 0x176b5b : 0x3c6c9b;
-    const capColor = isLocal ? 0xe9b949 : 0xf08a68;
-    const shadow = this.add.ellipse(0, 12, 24, 10, 0x142018, 0.32);
-    const standingPose = this.add.container(0, 0, [
-      this.add.rectangle(0, 2, 17, 17, capColor).setStrokeStyle(1, 0x3c3023),
-      this.add.rectangle(-4, 12, 5, 8, 0x323d42),
-      this.add.rectangle(4, 12, 5, 8, 0x323d42),
-      this.add.rectangle(0, 2, 15, 17, bodyColor).setStrokeStyle(2, 0x123f38),
-      this.add.triangle(0, -6, -4, 0, 4, 0, 0, 5, 0xe8d8b8),
-      this.add.circle(0, -11, 6, 0x8d5738).setStrokeStyle(1, 0x603b2a),
-      this.add.ellipse(0, -15, 12, 7, 0x302720),
-      this.add.rectangle(0, -18, 12, 4, capColor).setStrokeStyle(1, 0x463824),
-    ]);
-    const seatedPose = this.add.container(0, 0, [
-      this.add.rectangle(0, 3, 15, 13, bodyColor).setStrokeStyle(2, 0x123f38),
-      this.add.triangle(0, -3, -4, 0, 4, 0, 0, 4, 0xe8d8b8),
-      this.add.circle(0, -9, 6, 0x8d5738).setStrokeStyle(1, 0x603b2a),
-      this.add.ellipse(0, -13, 12, 7, 0x302720),
-      this.add.rectangle(0, -16, 12, 4, capColor).setStrokeStyle(1, 0x463824),
-      this.add.rectangle(-7, 9, 12, 5, 0x323d42),
-      this.add.rectangle(7, 9, 12, 5, 0x323d42),
-    ]).setVisible(false);
-    const raisedHand = this.add.container(10, -10, [
-      this.add.rectangle(0, -8, 5, 17, 0x8d5738).setAngle(-18),
-      this.add.circle(2, -18, 3, 0x8d5738),
-    ]).setVisible(false);
-    const handshakeArm = this.add.container(8, 0, [
-      this.add.rectangle(5, 0, 15, 5, 0x8d5738),
-      this.add.circle(14, 0, 3, 0x8d5738),
-    ]).setVisible(false);
-    const name = this.add
-      .text(0, -27, isLocal ? "YOU" : id.slice(0, 4), {
-        fontFamily: "Arial, sans-serif",
-        fontSize: "9px",
-        color: "#ffffff",
-        backgroundColor: "#202522",
-        padding: { x: 3, y: 2 },
-      })
-      .setOrigin(0.5, 1);
-
-    const actor = this.add.container(0, 0, [shadow, standingPose, seatedPose, raisedHand, handshakeArm, name]);
-    actor.setData("standingPose", standingPose);
-    actor.setData("seatedPose", seatedPose);
-    actor.setData("raisedHand", raisedHand);
-    actor.setData("handshakeArm", handshakeArm);
-    return actor;
+    return createPlayerActor(this, isLocal, id);
   }
 
   private playHandshake(arm: Phaser.GameObjects.Container, direction: number) {
-    this.tweens.killTweensOf(arm);
-    this.tweens.add({
-      targets: arm,
-      angle: direction * 18,
-      duration: 90,
-      yoyo: true,
-      repeat: 2,
-      onComplete: () => arm.setAngle(0),
-    });
+    playHandshake(this, arm, direction);
   }
 }

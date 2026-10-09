@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { MainScene } from "./scenes/MainScene";
+import { WORLD } from "../../../packages/shared/src/protocol.js";
 import "./style.css";
 
 new Phaser.Game({
@@ -7,8 +8,8 @@ new Phaser.Game({
 
   parent: "app",
 
-  width: 960,
-  height: 640,
+  width: WORLD.width + WORLD.campusExtraWidth,
+  height: WORLD.height,
 
   backgroundColor: "#91a878",
 

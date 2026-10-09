@@ -17,6 +17,14 @@ export const SIFAX_HALL: CampusLandmark = {
 export const CAMPUS_LANDMARKS: CampusLandmark[] = [
   SIFAX_HALL,
   {
+    id: "250-lecture-theatre",
+    name: "250 Lecture Theatre",
+    // Approximate position from the theatre label on the OpenStreetMap tiles.
+    latitude: 8.16908,
+    longitude: 4.26526,
+    color: 0xd39b42,
+  },
+  {
     id: "scsn-lecture-shed",
     name: "SCSN Lecture Shed",
     latitude: 8.169385,
