@@ -1,5 +1,5 @@
 import { MESSAGE } from "../../../../packages/shared/src/protocol.js";
-import type { PlayerState, ServerMessage } from "../../../../packages/shared/src/protocol.js";
+import type { PlayerAction, PlayerState, ServerMessage } from "../../../../packages/shared/src/protocol.js";
 
 type Status = "connecting" | "connected" | "disconnected";
 
@@ -68,6 +68,11 @@ export class GameConnection {
   interact() {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(JSON.stringify({ type: MESSAGE.interact }));
+  }
+
+  performAction(action: PlayerAction) {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(JSON.stringify({ type: MESSAGE.action, action }));
   }
 
   disconnect() {

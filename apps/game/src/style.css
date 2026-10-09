@@ -7,7 +7,7 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100%;
-  background: #202522;
+  background: #17231e;
 }
 
 body {
@@ -15,6 +15,9 @@ body {
   display: flex;
   justify-content: center;
   align-items: center;
+  background:
+    radial-gradient(ellipse at 50% 38%, rgb(72 103 73 / 36%), transparent 54%),
+    linear-gradient(145deg, #1d2c25, #111a17 72%);
 }
 
 #app {
@@ -23,23 +26,30 @@ body {
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 16px;
+  padding: 24px;
 }
 
 canvas {
   display: block;
   max-width: 100%;
+  border: 1px solid rgb(232 208 158 / 48%);
+  border-radius: 12px;
+  box-shadow:
+    0 28px 70px rgb(0 0 0 / 45%),
+    0 0 0 7px rgb(234 220 181 / 5%);
 }
 
 #map-attribution {
   position: fixed;
-  right: 12px;
-  bottom: 12px;
+  right: max(16px, calc((100vw - 960px) / 2 + 14px));
+  bottom: max(14px, calc((100vh - 640px) / 2 + 10px));
   z-index: 10;
-  padding: 5px 8px;
-  border-radius: 3px;
-  background: rgb(255 255 255 / 88%);
-  color: #202522;
-  font: 12px Arial, sans-serif;
+  padding: 6px 9px;
+  border: 1px solid rgb(32 37 34 / 10%);
+  border-radius: 6px;
+  background: rgb(255 250 232 / 90%);
+  color: #28362c;
+  font: 11px Arial, sans-serif;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 18%);
   text-decoration: none;
 }
